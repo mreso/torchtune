@@ -405,6 +405,9 @@ class FullModelHFCheckpointer(_CheckpointerInterface):
         keep_last_n_checkpoints (Optional[int]): How many checkpoints to keep. If None, all checkpoints are kept.
         enable_dcp (bool): If True, the checkpointer will load the checkpoint file using dcp checkpointing apis.
             This is currently an experimental feature.
+        intermediate_hf_dir_dcp (Optional[str]): If enable_dcp is True, then the presence of this arg indicates that checkpoints
+            are to be saved without rank-0 checkpointing. This is the path where the shards of safetensors files will be saved,
+            before being consolidated to the output_dir.
 
     Raises:
         ValueError: If recipe_state cannot be found when should_load_recipe_state is True
@@ -424,12 +427,14 @@ class FullModelHFCheckpointer(_CheckpointerInterface):
         *,
         keep_last_n_checkpoints: Optional[int] = None,
         enable_dcp: bool = False,
+        intermediate_hf_dir_dcp: Optional[str] = None,
     ) -> None:
         self._checkpoint_dir = checkpoint_dir
         self._keep_last_n_checkpoints = keep_last_n_checkpoints
         self._safe_serialization = safe_serialization
         self._model_type = ModelType[model_type]
         self._enable_dcp = enable_dcp
+        self._intermediate_hf_dir_dcp = intermediate_hf_dir_dcp
         self._output_dir = output_dir
         self._should_load_recipe_state = should_load_recipe_state
         if resume_from_checkpoint:
@@ -884,14 +889,34 @@ class FullModelHFCheckpointer(_CheckpointerInterface):
                 for fqn, filename in self._weight_map.items():
                     index = int(filename.split("-")[1])
                     fqn_to_file_index_mapping[fqn] = index
+
+                dist = True if self._intermediate_hf_dir_dcp else False
+                save_path = (
+                    os.path.join(self._intermediate_hf_dir_dcp, ckpt_save_dirname)
+                    if self._intermediate_hf_dir_dcp
+                    else os.path.join(self._output_dir, ckpt_save_dirname)
+                )
+                consolidated_output_path = (
+                    os.path.join(self._output_dir, ckpt_save_dirname)
+                    if self._intermediate_hf_dir_dcp
+                    else None
+                )
+                if consolidated_output_path:
+                    self._fs.mkdirs(self._intermediate_hf_dir_dcp, exist_ok=True)
+                    self._fs.mkdirs(consolidated_output_path, exist_ok=True)
+
                 storage_writer = HuggingFaceStorageWriter(
-                    path=os.path.join(self._output_dir, ckpt_save_dirname),
+                    path=save_path,
                     fqn_to_index_mapping=fqn_to_file_index_mapping,
+                    save_sharded=dist,
+                    thread_count=10,
+                    consolidated_output_path=consolidated_output_path,
+                    thread_count_consolidation=10,
                 )
                 save(
                     state_dict=state_dict[training.MODEL_KEY],
                     storage_writer=storage_writer,
-                    no_dist=True,
+                    no_dist=not dist,
                 )
             else:
                 from huggingface_hub.serialization import save_torch_state_dict

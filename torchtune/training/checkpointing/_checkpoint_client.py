@@ -25,7 +25,11 @@ from torchtune.modules.peft import (
     get_merged_lora_ckpt,
     validate_missing_and_unexpected_for_lora,
 )
-from torchtune.training.checkpointing._checkpointer import DistributedCheckpointer
+
+from torchtune.training.checkpointing._checkpointer import (
+    DistributedCheckpointer,
+    FullModelHFCheckpointer,
+)
 from torchtune.training.checkpointing._utils import get_most_recent_checkpoint
 from torchtune.training.memory import OptimizerInBackwardWrapper
 
@@ -259,7 +263,13 @@ class CheckpointClient:
         resume_from_checkpoint flag set to True and recipe file paths set in the config.
         """
         checkpointer = self._get_checkpointer()
-        is_distributed_checkpointer = isinstance(checkpointer, DistributedCheckpointer)
+        is_distributed_checkpointer = isinstance(
+            checkpointer, DistributedCheckpointer
+        ) or (
+            isinstance(checkpointer, FullModelHFCheckpointer)
+            and checkpointer._enable_dcp
+            and checkpointer._intermediate_hf_dir_dcp is not None
+        )
 
         # final dict passed onto the checkpointer
         checkpoint_dict = {}
@@ -310,7 +320,6 @@ class CheckpointClient:
                 log.info(
                     f"Getting full model state dict took {time.perf_counter() - cp_start:.2f} secs"
                 )
-
         elif not is_distributed_checkpointer:
             model_state_dict = {k: v.cpu() for k, v in model.state_dict().items()}
         else:
