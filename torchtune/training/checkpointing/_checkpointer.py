@@ -567,7 +567,9 @@ class FullModelHFCheckpointer(_CheckpointerInterface):
         Raises:
             ValueError: If the values in the input state_dict are not Tensors
         """
-        if self._enable_dcp:
+
+        # if self._enable_dcp:
+        if False:
             from torch.distributed.checkpoint import HuggingFaceStorageReader
 
             # DCP load using the storage reader
@@ -586,6 +588,17 @@ class FullModelHFCheckpointer(_CheckpointerInterface):
 
             merged_state_dict = state_dict
         else:
+            from torch.distributed.checkpoint import HuggingFaceStorageReader
+            hf_storage_reader = HuggingFaceStorageReader(path=self._checkpoint_dir)
+            metadata = hf_storage_reader.read_metadata()
+            self._weight_map = {
+                key.fqn: os.path.basename(val.relative_path)
+                for key, val in metadata.storage_data.items()
+            }
+            del hf_storage_reader
+            del metadata
+            gc.collect()
+
             merged_state_dict = {}
             # _checkpoint_paths are already sorted so simply enumerate to generate the right id
             for cpt_idx, cpt_path in enumerate(self._checkpoint_paths):
@@ -599,7 +612,7 @@ class FullModelHFCheckpointer(_CheckpointerInterface):
                             f"Found {type(value)} instead."
                         )
                     # idx is written in the 4 digit format (eg: 0001, 0002, etc.)
-                    self._weight_map[key] = f"{cpt_idx + 1:04}"
+                    # self._weight_map[key] = f"{cpt_idx + 1:04}"
                 merged_state_dict.update(state_dict)
 
                 # delete the state_dict to free up memory; TODO check if this del is needed
